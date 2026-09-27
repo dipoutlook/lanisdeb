@@ -1,0 +1,71 @@
+server {
+    listen 80;
+    server_name {{ domain }} www.{{ domain }};
+
+    # Redirect non-www to www (optional, but good for SEO)
+    if ($host = {{ domain }}) {
+        return 301 https://www.{{ domain }}$request_uri;
+    }
+
+    # For Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name www.{{ domain }};
+
+    # SSL configuration will be added by Certbot
+    ssl_certificate /etc/letsencrypt/live/www.{{ domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/www.{{ domain }}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    # Serve frontend static files from the build directory
+    root {{ app_dir }}/dist;
+    index index.html;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Cache static assets
+    location ~* \.(?:css|js|jpg|jpeg|gif|png|ico|cur|gz|svg|svgz|mp4|ogg|ogv|webm|htc)$ {
+      expires 1M;
+      access_log off;
+      add_header Cache-Control "public";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        # Rate limit API requests (optional, requires limit_req_zone in nginx.conf)
+        # limit_req zone=api burst=10 nodelay;
+
+        proxy_pass http://localhost:{{ upstream_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+    }
+}
